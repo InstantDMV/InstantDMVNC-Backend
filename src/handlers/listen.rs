@@ -1,0 +1,31 @@
+use crate::cache::OFFICE_CACHE;
+use crate::scraping::scraper::NCDMVScraper;
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::task;
+
+pub async fn listen(zipcode: String, max_distance: u16) -> Result<()> {
+    task::spawn(async move {
+        match NCDMVScraper::new(zipcode.clone(), max_distance).await {
+            Ok(scraper) => {
+                let scraper = Arc::new(scraper);
+                let mut receiver = scraper.clone().start_appointment_stream(1).await;
+
+                while let Some(offices) = receiver.recv().await {
+                    for office in offices {
+                        OFFICE_CACHE
+                            .insert(office.office_name.clone(), office)
+                            .await;
+                    }
+                }
+
+                tracing::warn!("Receiver closed for {}", zipcode);
+            }
+            Err(e) => {
+                tracing::error!("Failed to start scraper for {}: {:?}", zipcode, e);
+            }
+        }
+    });
+
+    Ok(())
+}

@@ -4,9 +4,15 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::task;
 
-pub async fn listen(zipcode: String, max_distance: u16) -> Result<()> {
+pub async fn listen(
+    zipcode: String,
+    max_distance: u16,
+    name: String,
+    phone_number: String,
+    email: String,
+) -> Result<()> {
     task::spawn(async move {
-        match NCDMVScraper::new(zipcode.clone(), max_distance).await {
+        match NCDMVScraper::new(zipcode.clone(), max_distance, name, phone_number, email).await {
             Ok(scraper) => {
                 let scraper = Arc::new(scraper);
                 let mut receiver = scraper.clone().start_appointment_stream(1).await;

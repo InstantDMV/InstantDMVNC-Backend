@@ -18,14 +18,26 @@ use tokio::time::interval;
 use tracing::{error, info};
 
 pub struct NCDMVScraper {
+    name: String,
+    phone_number: String,
+    email: String,
     zipcode: String,
     max_distance: u16,
 }
 
 impl NCDMVScraper {
-    pub async fn new(zipcode: String, max_distance: u16) -> Result<Self> {
+    pub async fn new(
+        zipcode: String,
+        max_distance: u16,
+        name: String,
+        phone_number: String,
+        email: String,
+    ) -> Result<Self> {
         if Self::validate(&zipcode).await? {
             Ok(NCDMVScraper {
+                name,
+                phone_number,
+                email,
                 zipcode,
                 max_distance,
             })
@@ -163,11 +175,30 @@ impl NCDMVScraper {
                 .trim_end_matches(',')
                 .to_string();
 
+            let distance: u16 = match office_divs.iter().rev().next() {
+                Some(div) => {
+                    let text = div
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(" Miles", "")
+                        .replace("text=", "");
+                    let parsed_distance =
+                        text.parse::<f32>().expect("failed to parse the distance");
+                    parsed_distance.round() as u16
+                }
+                None => 0,
+            };
+
+            if distance > self.max_distance {
+                continue;
+            }
             let mut office_availability = OfficeAvailability {
                 is_reservable,
                 office_name,
                 street_address,
                 zip_code,
+                distance,
                 available_dates: Vec::new(),
                 selected_date: None,
             };
@@ -255,17 +286,77 @@ impl NCDMVScraper {
                             }
                         }
                     }
-                    if driver.find(By::Tag("body")).await.expect("failed to read pages text").text().await.unwrap().contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.
-    ") {
-        // Go back to the list view for next office
-        if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
-            let _ = back_button.click().await;
-            sleep(Duration::from_secs(1)).await;
-        }
-        break;
+                    if driver.find(By::Tag("body")).await.expect("failed to read pages text").text().await.unwrap().contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.") {
+                        // Go back to the list view for next office
+                        if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
+                            let _ = back_button.click().await;
+                            sleep(Duration::from_secs(1)).await;
+                        }
+                        break;
 
-    }
-                    // Go back to the list view for next office
+                    }
+
+                    // next button for inputting info
+                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = back_button.click().await;
+                        sleep(Duration::from_secs(1)).await;
+                    }
+
+                    if driver
+                        .find(By::Tag("body"))
+                        .await
+                        .expect("failed to read pages text")
+                        .text()
+                        .await
+                        .unwrap()
+                        .contains("Please select a date and time to continue.")
+                    {
+                        // Go back to the list view for next office
+                        if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
+                            let _ = back_button.click().await;
+                            sleep(Duration::from_secs(1)).await;
+                        }
+                        break;
+                    }
+
+                    let name_clone = self.name.clone();
+                    let names: Vec<&str> = name_clone.split('_').collect();
+                    let fname = names[0];
+                    let lname = if names.len() > 1 { names[1] } else { "" };
+
+                    let _ = driver
+                        .find(By::Id(FNAME_INPUT_ID))
+                        .await
+                        .unwrap()
+                        .send_keys(fname);
+
+                    let _ = driver
+                        .find(By::Id(LNAME_INPUT_ID))
+                        .await
+                        .unwrap()
+                        .send_keys(lname);
+
+                    let _ = driver
+                        .find(By::Id(PHONE_NUM_INPUT_ID))
+                        .await
+                        .unwrap()
+                        .send_keys(self.phone_number.as_str());
+
+                    let _ = driver
+                        .find(By::Id(EMAIL_INPUT_ID))
+                        .await
+                        .unwrap()
+                        .send_keys(self.email.as_str());
+
+                    let _ = driver
+                        .find(By::Id(CONFIRM_EMAIL_INPUT_ID))
+                        .await
+                        .unwrap()
+                        .send_keys(self.email.as_str());
+
+                    sleep(Duration::from_secs(2)).await;
+
+                    // next button for inputting info
                     if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
                         let _ = back_button.click().await;
                         sleep(Duration::from_secs(1)).await;

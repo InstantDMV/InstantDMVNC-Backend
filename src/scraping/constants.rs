@@ -7,9 +7,8 @@ pub const WINDOW_HEIGHT: u32 = 775;
 
 // HTML element selectors used in automation
 pub const BUTTON_MAKE_APPT_ID: &str = "cmdMakeAppt";
-pub const SELECTOR_SECOND_FORM_CHILD: &str = ".QflowObjectItem:nth-child(2) .form-control-child";
-pub const SEARCH_INPUT_ID: &str = "search-input";
-pub const INPUT_RESULTS_SELECTOR: &str = ".input-results";
+// pub const SEARCH_INPUT_ID: &str = "search-input";
+// pub const INPUT_RESULTS_SELECTOR: &str = ".input-results";
 
 // HTML class selectors for scraping
 pub const DMV_ITEM_CLASS: &str = "QflowObjectItem";

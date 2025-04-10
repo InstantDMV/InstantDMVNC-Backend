@@ -1,21 +1,36 @@
-extern crate country;
-extern crate postal_code;
-
+use captcha_oxide::CaptchaSolver;
+use captcha_oxide::CaptchaTask;
+use captcha_oxide::captcha_types::recaptcha::RecaptchaV2;
 use country::Country;
+use dotenv::dotenv;
 use postal_code::PostalCode;
+use serde_json::Value;
+use std::env;
 
 use crate::models::offices::OfficeAvailability;
 use crate::scraping::constants::*;
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveDate};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use thirtyfour::prelude::*;
 use thirtyfour::support::sleep;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{error, info};
+
+/**
+NC DMV has a bug where when an appointment is in the proccess of
+being booked it shows as blue (possible to be booked) when really it is taken,
+the client has just not finished the form and submitted
+
+this tracks those so we dont miss anything
+*/
+
+static FALSLEY_ENABLED_LOCATIONS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
 
 pub struct NCDMVScraper {
     name: String,
@@ -55,12 +70,12 @@ impl NCDMVScraper {
 
     pub async fn stream_available_appointments(
         self: Arc<Self>,
-        zip_code: String,
+        _zip_code: String, // TODO use this
         refresh_interval_secs: u64,
         tx: mpsc::Sender<Vec<OfficeAvailability>>,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
-        // _ = caps.set_headless(); //for debugging comment this line
+        _ = caps.set_headless(); //for debugging comment this line
         let driver = WebDriver::new("http://localhost:60103", caps).await?;
         let driver = Arc::new(driver);
 
@@ -78,27 +93,32 @@ impl NCDMVScraper {
             .await?;
 
         // Wait for navigation
-        sleep(Duration::from_secs(8)).await;
+        sleep(Duration::from_secs(10)).await;
 
-        driver
-            .find(By::Css(SELECTOR_SECOND_FORM_CHILD))
-            .await?
-            .click()
-            .await?;
+        let elements = driver.find_all(By::Css("div.form-control-child")).await?;
+        for elem in elements {
+            if elem.text().await?.contains("New driver over") {
+                elem.click().await?;
+                break;
+            }
+        }
 
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(10)).await;
 
-        let search_input = driver.find(By::Id(SEARCH_INPUT_ID)).await?;
-        search_input.click().await?;
-        search_input.send_keys(&zip_code).await?;
+        /*
+        TODO -> i need to reinput zipcode after each go
+        */
 
-        sleep(Duration::from_secs(3)).await;
+        // let search_input = driver.find(By::Id(SEARCH_INPUT_ID)).await?;
+        // search_input.click().await?;
+        // search_input.send_keys(&zip_code).await?;
 
-        driver
-            .find(By::Css(INPUT_RESULTS_SELECTOR))
-            .await?
-            .click()
-            .await?;
+        // sleep(Duration::from_secs(10)).await;
+        // driver
+        //     .find(By::Css(INPUT_RESULTS_SELECTOR))
+        //     .await?
+        //     .click()
+        //     .await?;
 
         // Now that we're on the results page, start checking periodically
         let mut refresh_interval = interval(Duration::from_secs(refresh_interval_secs));
@@ -203,7 +223,14 @@ impl NCDMVScraper {
                 selected_date: None,
             };
 
-            // If office is reservable, try to click on it and check for available dates
+            if FALSLEY_ENABLED_LOCATIONS
+                .lock()
+                .unwrap()
+                .contains(&office_availability.office_name)
+            {
+                continue; // skip
+            }
+
             if is_reservable {
                 if let Ok(_) = office_el.click().await {
                     // Wait for calendar to load
@@ -281,25 +308,23 @@ impl NCDMVScraper {
                             if let Ok(_) = driver.find(By::LinkText(&day_text)).await {
                                 info!(
                                     "Selected date {} for office {}",
-                                    earliest_date, office_availability.office_name
+                                    earliest_date,
+                                    office_availability.office_name.clone()
                                 );
                             }
                         }
                     }
+
                     if driver.find(By::Tag("body")).await.expect("failed to read pages text").text().await.unwrap().contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.") {
                         // Go back to the list view for next office
                         if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
                             let _ = back_button.click().await;
                             sleep(Duration::from_secs(1)).await;
                         }
+                        FALSLEY_ENABLED_LOCATIONS.lock().unwrap().push(office_availability.office_name);
+
                         break;
 
-                    }
-
-                    // next button for inputting info
-                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
-                        let _ = back_button.click().await;
-                        sleep(Duration::from_secs(1)).await;
                     }
 
                     if driver
@@ -316,7 +341,45 @@ impl NCDMVScraper {
                             let _ = back_button.click().await;
                             sleep(Duration::from_secs(1)).await;
                         }
+
+                        FALSLEY_ENABLED_LOCATIONS
+                            .lock()
+                            .unwrap()
+                            .push(office_availability.office_name);
+
                         break;
+                    }
+
+                    if driver
+                        .find(By::Tag("body"))
+                        .await
+                        .expect("failed to read pages text")
+                        .text()
+                        .await
+                        .unwrap()
+                        .contains("We were unable")
+                    // we were so close!
+                    {
+                        // Go back to the list view for next office
+                        if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
+                            let _ = back_button.click().await;
+                            sleep(Duration::from_secs(1)).await;
+                        }
+
+                        FALSLEY_ENABLED_LOCATIONS
+                            .lock()
+                            .unwrap()
+                            .push(office_availability.office_name);
+
+                        break;
+                    }
+
+                    sleep(Duration::from_secs(3)).await;
+
+                    // next button for inputting info
+                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = back_button.click().await;
+                        sleep(Duration::from_secs(1)).await;
                     }
 
                     let name_clone = self.name.clone();
@@ -324,43 +387,117 @@ impl NCDMVScraper {
                     let fname = names[0];
                     let lname = if names.len() > 1 { names[1] } else { "" };
 
-                    let _ = driver
+                    info!("solving captcha");
+                    dotenv().ok();
+                    let key = env::var("2CAPTCHA_KEY").expect("2CAPTCHA_KEY not set in .env");
+                    let solver = CaptchaSolver::new(key);
+
+                    let args = RecaptchaV2::builder()
+                        .website_url("https://skiptheline.ncdot.gov/")
+                        .website_key("6LegSQ0dAAAAALO2_3-EDnTRDc7AQLz6Jo1BFyct")
+                        .build()
+                        .expect("failed to solve captcha");
+
+                    let solution = solver
+                        .solve(args)
+                        .await
+                        .expect("failed to solve captcha...")
+                        .unwrap()
+                        .solution;
+
+                    let token = solution.g_recaptcha_response;
+
+                    info!("got solution sucessfully!");
+
+                    info!("{}", token);
+
+                    let js = r#"
+                        document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
+                        document.getElementById('g-recaptcha-response').style.display = 'block';
+                    "#;
+
+                    info!("executing js for captcha");
+
+                    let args: Vec<Value> = vec![Value::String(token.to_string())];
+                    driver.execute(js, Arc::from(args)).await?;
+
+                    let js_callback = r#"
+                        CaptchaCallBack(arguments[0]);
+                    "#;
+
+                    driver
+                        .execute(
+                            js_callback,
+                            Arc::from(vec![Value::String(token.to_string())]),
+                        )
+                        .await?;
+
+                    sleep(Duration::from_secs(30)).await;
+
+                    driver.find(By::Id(FNAME_INPUT_ID)).await?.click().await?;
+                    sleep(Duration::from_millis(150)).await;
+                    driver
                         .find(By::Id(FNAME_INPUT_ID))
-                        .await
-                        .unwrap()
-                        .send_keys(fname);
+                        .await?
+                        .send_keys(fname)
+                        .await?;
 
-                    let _ = driver
+                    sleep(Duration::from_millis(150)).await;
+                    driver.find(By::Id(LNAME_INPUT_ID)).await?.click().await?;
+                    sleep(Duration::from_millis(150)).await;
+                    driver
                         .find(By::Id(LNAME_INPUT_ID))
-                        .await
-                        .unwrap()
-                        .send_keys(lname);
+                        .await?
+                        .send_keys(lname)
+                        .await?;
 
-                    let _ = driver
+                    sleep(Duration::from_millis(150)).await;
+                    driver
                         .find(By::Id(PHONE_NUM_INPUT_ID))
-                        .await
-                        .unwrap()
-                        .send_keys(self.phone_number.as_str());
+                        .await?
+                        .click()
+                        .await?;
+                    sleep(Duration::from_millis(150)).await;
+                    driver
+                        .find(By::Id(PHONE_NUM_INPUT_ID))
+                        .await?
+                        .send_keys(self.phone_number.as_str())
+                        .await?;
 
-                    let _ = driver
+                    sleep(Duration::from_millis(150)).await;
+                    driver.find(By::Id(EMAIL_INPUT_ID)).await?.click().await?;
+                    sleep(Duration::from_millis(150)).await;
+                    driver
                         .find(By::Id(EMAIL_INPUT_ID))
-                        .await
-                        .unwrap()
-                        .send_keys(self.email.as_str());
+                        .await?
+                        .send_keys(self.email.as_str())
+                        .await?;
 
-                    let _ = driver
+                    sleep(Duration::from_millis(150)).await;
+                    driver
                         .find(By::Id(CONFIRM_EMAIL_INPUT_ID))
-                        .await
-                        .unwrap()
-                        .send_keys(self.email.as_str());
+                        .await?
+                        .click()
+                        .await?;
+                    sleep(Duration::from_millis(150)).await;
+                    driver
+                        .find(By::Id(CONFIRM_EMAIL_INPUT_ID))
+                        .await?
+                        .send_keys(self.email.as_str())
+                        .await?;
 
-                    sleep(Duration::from_secs(2)).await;
-
-                    // next button for inputting info
                     if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
                         let _ = back_button.click().await;
                         sleep(Duration::from_secs(1)).await;
                     }
+
+                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = back_button.click().await;
+                        sleep(Duration::from_secs(1)).await;
+                    }
+
+                    driver.clone().quit().await?;
+                    break;
                 }
             }
 

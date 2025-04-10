@@ -7,10 +7,15 @@ This is meant to only get 1 appointment on behalf of a client, in no way are we 
 I (@ElijahBare) have started work on this project due to my troubles with getting an appointment at the DMV in NC
 it is a painpoint for everyone, especially with the RealID deadline approaching.
 
+## Features
+- scans appointments with thirtyfour (selenium bindings for rust)
+- able to book appointment for you 
+- solves captcha
+
 # TODO
+
 ## urgent
-- more than just 18+ new driver license appointments, user should able to choose
-- should be able to book appointment for you.
+- more than just 18+ new driver license appointments, user should able to choose (WIP - still need an enum)
 - cli for open source users
 
 *theres more of these but im going to bed now...*

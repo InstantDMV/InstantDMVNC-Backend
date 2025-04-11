@@ -23,4 +23,4 @@ COPY . .
 # Build actual project
 RUN cargo build --release
 
-CMD ["./target/debug/instant_dmv_backend"]
+CMD ["./target/release/instant_dmv_backend"]

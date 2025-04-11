@@ -5,7 +5,6 @@ use country::Country;
 use dotenv::dotenv;
 use postal_code::PostalCode;
 use serde_json::Value;
-use std::env;
 
 use crate::models::offices::OfficeAvailability;
 use crate::scraping::constants::*;
@@ -97,7 +96,7 @@ impl NCDMVScraper {
 
         let elements = driver.find_all(By::Css("div.form-control-child")).await?;
         for elem in elements {
-            if elem.text().await?.contains("New driver over") {
+            if elem.text().await?.contains("State ID") {
                 elem.click().await?;
                 break;
             }
@@ -315,6 +314,11 @@ impl NCDMVScraper {
                         }
                     }
 
+                    if let Ok(next_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = next_button.click().await;
+                        sleep(Duration::from_secs(1)).await;
+                    } // force error if there is one
+
                     if driver.find(By::Tag("body")).await.expect("failed to read pages text").text().await.unwrap().contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.") {
                         // Go back to the list view for next office
                         if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
@@ -376,63 +380,10 @@ impl NCDMVScraper {
 
                     sleep(Duration::from_secs(3)).await;
 
-                    // next button for inputting info
-                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
-                        let _ = back_button.click().await;
-                        sleep(Duration::from_secs(1)).await;
-                    }
-
                     let name_clone = self.name.clone();
                     let names: Vec<&str> = name_clone.split('_').collect();
                     let fname = names[0];
                     let lname = if names.len() > 1 { names[1] } else { "" };
-
-                    info!("solving captcha");
-                    dotenv().ok();
-                    let key = env::var("2CAPTCHA_KEY").expect("2CAPTCHA_KEY not set in .env");
-                    let solver = CaptchaSolver::new(key);
-
-                    let args = RecaptchaV2::builder()
-                        .website_url("https://skiptheline.ncdot.gov/")
-                        .website_key("6LegSQ0dAAAAALO2_3-EDnTRDc7AQLz6Jo1BFyct")
-                        .build()
-                        .expect("failed to solve captcha");
-
-                    let solution = solver
-                        .solve(args)
-                        .await
-                        .expect("failed to solve captcha...")
-                        .unwrap()
-                        .solution;
-
-                    let token = solution.g_recaptcha_response;
-
-                    info!("got solution sucessfully!");
-
-                    info!("{}", token);
-
-                    let js = r#"
-                        document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
-                        document.getElementById('g-recaptcha-response').style.display = 'block';
-                    "#;
-
-                    info!("executing js for captcha");
-
-                    let args: Vec<Value> = vec![Value::String(token.to_string())];
-                    driver.execute(js, Arc::from(args)).await?;
-
-                    let js_callback = r#"
-                        CaptchaCallBack(arguments[0]);
-                    "#;
-
-                    driver
-                        .execute(
-                            js_callback,
-                            Arc::from(vec![Value::String(token.to_string())]),
-                        )
-                        .await?;
-
-                    sleep(Duration::from_secs(30)).await;
 
                     driver.find(By::Id(FNAME_INPUT_ID)).await?.click().await?;
                     sleep(Duration::from_millis(150)).await;
@@ -486,18 +437,73 @@ impl NCDMVScraper {
                         .send_keys(self.email.as_str())
                         .await?;
 
-                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
-                        let _ = back_button.click().await;
+                    info!("solving captcha");
+                    dotenv().ok();
+                    let key = "717c749b232f1a43c78bc45371d10972";
+                    let solver = CaptchaSolver::new(key);
+
+                    let args = RecaptchaV2::builder()
+                        .website_url("https://skiptheline.ncdot.gov/")
+                        .website_key("6LegSQ0dAAAAALO2_3-EDnTRDc7AQLz6Jo1BFyct")
+                        .build()
+                        .expect("failed to solve captcha");
+
+                    let solution = solver
+                        .solve(args)
+                        .await
+                        .expect("failed to solve captcha...")
+                        .unwrap()
+                        .solution;
+
+                    let token = solution.g_recaptcha_response;
+
+                    info!("got solution sucessfully!");
+
+                    info!("{}", token);
+
+                    let js = r#"
+                                            document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
+                                            document.getElementById('g-recaptcha-response').style.display = 'block';
+                                        "#;
+
+                    info!("executing js for captcha");
+
+                    let args: Vec<Value> = vec![Value::String(token.to_string())];
+                    driver.execute(js, Arc::from(args)).await?;
+
+                    let js_callback = r#"
+                                            CaptchaCallBack(arguments[0]);
+                                        "#;
+
+                    driver
+                        .execute(
+                            js_callback,
+                            Arc::from(vec![Value::String(token.to_string())]),
+                        )
+                        .await?;
+
+                    sleep(Duration::from_secs(1)).await;
+
+                    if let Ok(next_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = next_button.click().await;
                         sleep(Duration::from_secs(1)).await;
                     }
 
-                    if let Ok(back_button) = driver.find(By::ClassName("next-button")).await {
-                        let _ = back_button.click().await;
+                    if let Ok(next_button) = driver.find(By::ClassName("next-button")).await {
+                        let _ = next_button.click().await;
                         sleep(Duration::from_secs(1)).await;
                     }
 
                     driver.clone().quit().await?;
                     break;
+                }
+            } else {
+                if FALSLEY_ENABLED_LOCATIONS
+                    .lock()
+                    .unwrap()
+                    .contains(&office_availability.office_name.clone())
+                {
+                    FALSLEY_ENABLED_LOCATIONS.lock().unwrap().clear();
                 }
             }
 

@@ -9,13 +9,13 @@ it is a painpoint for everyone, especially with the RealID deadline approaching.
 
 ## Features
 - scans appointments with thirtyfour (selenium bindings for rust)
-- able to book appointment for you 
+- able to book appointment for you
 - solves captcha
+- more than just 18+ new driver license appointments, user should able to choose (Done)
 
 # TODO
 
 ## urgent
-- more than just 18+ new driver license appointments, user should able to choose (WIP - still need an enum)
 - cli for open source users
 
 *theres more of these but im going to bed now...*

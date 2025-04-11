@@ -73,6 +73,7 @@ impl NCDMVScraper {
         refresh_interval_secs: u64,
         tx: mpsc::Sender<Vec<OfficeAvailability>>,
         selector: String,
+        dates: Vec<String>,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
         // _ = caps.set_headless(); //for debugging comment this line
@@ -132,7 +133,10 @@ impl NCDMVScraper {
             refresh_interval.tick().await;
             let scraper = Arc::clone(&self);
 
-            match scraper.scrape_and_check_available_dates(&driver).await {
+            match scraper
+                .scrape_and_check_available_dates(&driver, &dates)
+                .await
+            {
                 Ok(results) => {
                     if tx.send(results).await.is_err() {
                         // Channel closed, receiver dropped
@@ -160,6 +164,7 @@ impl NCDMVScraper {
     async fn scrape_and_check_available_dates(
         self: Arc<Self>,
         driver: &WebDriver,
+        dates: &Vec<String>,
     ) -> WebDriverResult<Vec<OfficeAvailability>> {
         let mut results = Vec::new();
 
@@ -288,7 +293,7 @@ impl NCDMVScraper {
                                         "October" => 10,
                                         "November" => 11,
                                         "December" => 12,
-                                        _ => continue, //wtf this shouldnt happen unless the gods reinvent the universe as we know it
+                                        _ => continue, // This case is unexpected.
                                     };
 
                                     if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
@@ -299,42 +304,74 @@ impl NCDMVScraper {
                         }
                     }
 
-                    // If we have available dates, try to select the earliest one
+                    // --- Modification: Select the soonest date from the user-provided list ---
                     if !office_availability.available_dates.is_empty() {
-                        // Sort dates in ascending order
-                        let mut sorted_dates = office_availability.available_dates.clone();
-                        sorted_dates.sort();
+                        // Convert provided date strings to NaiveDate objects.
+                        let provided_dates: Vec<NaiveDate> = dates
+                            .iter()
+                            .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                            .collect();
 
-                        if let Some(earliest_date) = sorted_dates.first() {
-                            // Find the day number as text
+                        // Filter the scraped available dates for those that also appear in the user's list.
+                        let mut matching_dates: Vec<NaiveDate> = office_availability
+                            .available_dates
+                            .iter()
+                            .filter(|date| provided_dates.contains(date))
+                            .copied()
+                            .collect();
+
+                        if matching_dates.is_empty() {
+                            if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
+                                let _ = back_button.click().await;
+                                sleep(Duration::from_secs(1)).await;
+                            }
+                            FALSLEY_ENABLED_LOCATIONS
+                                .lock()
+                                .unwrap()
+                                .push(office_availability.office_name);
+
+                            break;
+                        }
+
+                        // Sort the matching dates so that the soonest is first.
+                        matching_dates.sort();
+
+                        if let Some(earliest_date) = matching_dates.first() {
+                            // Get the day as text.
                             let day_text = earliest_date.day().to_string();
 
-                            // Try to click on that date
-                            if let Ok(_) = driver.find(By::LinkText(&day_text)).await {
+                            // Try to find and click the date on the page.
+                            if driver.find(By::LinkText(&day_text)).await.is_ok() {
                                 info!(
                                     "Selected date {} for office {}",
-                                    earliest_date,
-                                    office_availability.office_name.clone()
+                                    earliest_date, office_availability.office_name
                                 );
                             }
                         }
                     }
+                    // ------------------------------------------------------------------------
 
                     if let Ok(next_button) = driver.find(By::ClassName("next-button")).await {
                         let _ = next_button.click().await;
                         sleep(Duration::from_secs(1)).await;
-                    } // force error if there is one
+                    }
 
-                    if driver.find(By::Tag("body")).await.expect("failed to read pages text").text().await.unwrap().contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.") {
-                        // Go back to the list view for next office
+                    // Check for various "no availability" messages and back out if needed.
+                    if driver
+                        .find(By::Tag("body"))
+                        .await
+                        .expect("failed to read pages text")
+                        .text()
+                        .await
+                        .unwrap()
+                        .contains("This office does not currently have any appointments available in the next 90 days. Please try scheduling an appointment at another office or try again tomorrow when a new day's appointments will be available.")
+                    {
                         if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
                             let _ = back_button.click().await;
                             sleep(Duration::from_secs(1)).await;
                         }
                         FALSLEY_ENABLED_LOCATIONS.lock().unwrap().push(office_availability.office_name);
-
                         break;
-
                     }
 
                     if driver
@@ -346,17 +383,14 @@ impl NCDMVScraper {
                         .unwrap()
                         .contains("Please select a date and time to continue.")
                     {
-                        // Go back to the list view for next office
                         if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
                             let _ = back_button.click().await;
                             sleep(Duration::from_secs(1)).await;
                         }
-
                         FALSLEY_ENABLED_LOCATIONS
                             .lock()
                             .unwrap()
                             .push(office_availability.office_name);
-
                         break;
                     }
 
@@ -368,19 +402,15 @@ impl NCDMVScraper {
                         .await
                         .unwrap()
                         .contains("We were unable")
-                    // we were so close!
                     {
-                        // Go back to the list view for next office
                         if let Ok(back_button) = driver.find(By::Id("BackButton")).await {
                             let _ = back_button.click().await;
                             sleep(Duration::from_secs(1)).await;
                         }
-
                         FALSLEY_ENABLED_LOCATIONS
                             .lock()
                             .unwrap()
                             .push(office_availability.office_name);
-
                         break;
                     }
 
@@ -468,9 +498,9 @@ impl NCDMVScraper {
                     info!("{}", token);
 
                     let js = r#"
-                                            document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
-                                            document.getElementById('g-recaptcha-response').style.display = 'block';
-                                        "#;
+                                                                document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
+                                                                document.getElementById('g-recaptcha-response').style.display = 'block';
+                                                            "#;
 
                     info!("executing js for captcha");
 
@@ -478,8 +508,8 @@ impl NCDMVScraper {
                     driver.execute(js, Arc::from(args)).await?;
 
                     let js_callback = r#"
-                                            CaptchaCallBack(arguments[0]);
-                                        "#;
+                                                                CaptchaCallBack(arguments[0]);
+                                                            "#;
 
                     driver
                         .execute(
@@ -523,9 +553,10 @@ impl NCDMVScraper {
         self: Arc<Self>,
         refresh_interval_secs: u64,
         service_type: DMVService,
+        dates: Vec<String>,
     ) -> mpsc::Receiver<Vec<OfficeAvailability>> {
-        let (tx, rx) = mpsc::channel(117); // Buffer size of 117 for 117 dmvs in NC
-        info!("scraping nc dmv data with date checking");
+        let (tx, rx) = mpsc::channel(117); // Buffer size of 117 for 117 DMVs in NC
+        info!("scraping NC DMV data with date checking");
 
         // Clone shared state to move into the task
         let scraper = Arc::clone(&self);
@@ -538,6 +569,7 @@ impl NCDMVScraper {
                     refresh_interval_secs,
                     tx,
                     service_type.selector().to_string(),
+                    dates,
                 )
                 .await
             {

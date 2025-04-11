@@ -79,9 +79,19 @@ fn get_service_by_title(title: &str) -> Result<DMVService, ServiceNotFoundError>
     }
 }
 
-#[get("/test/{zipcode}/{max_distance}/{name}/{phone_number}/{email}/{service_title}")]
-async fn test(path: web::Path<(String, u16, String, String, String, String)>) -> impl Responder {
-    let (zipcode, max_distance, name, phone_number, email, service_title) = path.into_inner();
+#[get("/test/{zipcode}/{max_distance}/{name}/{phone_number}/{email}/{service_title}/{dates}")]
+async fn test(
+    path: web::Path<(String, u16, String, String, String, String, String)>,
+) -> impl Responder {
+    // Destructure the tuple into individual parameters.
+    let (zipcode, max_distance, name, phone_number, email, service_title, dates_str) =
+        path.into_inner();
+
+    // Parse the dates string into a Vec<String>. The dates are expected to be comma-separated.
+    let dates: Vec<String> = dates_str
+        .split(',')
+        .map(|date| date.trim().to_string())
+        .collect();
 
     // Get service type from title
     let service_type = match get_service_by_title(&service_title) {
@@ -92,6 +102,7 @@ async fn test(path: web::Path<(String, u16, String, String, String, String)>) ->
         }
     };
 
+    // Pass the dates vector to the listen function.
     match listen(
         zipcode,
         max_distance,
@@ -99,6 +110,7 @@ async fn test(path: web::Path<(String, u16, String, String, String, String)>) ->
         phone_number,
         email,
         service_type,
+        dates, // The new parameter containing the list of dates.
     )
     .await
     {

@@ -12,6 +12,7 @@ pub async fn listen(
     phone_number: String,
     email: String,
     service_type: DMVService,
+    dates: Vec<String>,
 ) -> Result<()> {
     task::spawn(async move {
         match NCDMVScraper::new(zipcode.clone(), max_distance, name, phone_number, email).await {
@@ -19,7 +20,7 @@ pub async fn listen(
                 let scraper = Arc::new(scraper);
                 let mut receiver = scraper
                     .clone()
-                    .start_appointment_stream(1, service_type)
+                    .start_appointment_stream(1, service_type, dates)
                     .await;
 
                 while let Some(offices) = receiver.recv().await {

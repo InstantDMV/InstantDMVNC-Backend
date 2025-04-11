@@ -75,6 +75,11 @@ impl NCDMVScraper {
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
         _ = caps.set_headless(); //for debugging comment this line
+
+        caps.add_arg("--no-sandbox")?;
+        caps.add_arg("--disable-dev-shm-usage")?;
+        caps.add_arg("--disable-gpu")?;
+
         let driver = WebDriver::new("http://localhost:60103", caps).await?;
         let driver = Arc::new(driver);
 

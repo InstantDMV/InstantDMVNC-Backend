@@ -11,7 +11,7 @@ async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
 
     HttpServer::new(|| App::new().configure(routes::init))
-        .bind(("0.0.0.0", 8080))?
+        .bind(("0.0.0.0", 8675))?
         .run()
         .await
 }

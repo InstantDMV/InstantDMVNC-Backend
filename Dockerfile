@@ -23,4 +23,11 @@ COPY . .
 # Build actual project
 RUN cargo build --release
 
-CMD ["./target/release/instant_dmv_backend"]
+# Copy the binary
+COPY ./target/release/instant_dmv_backend .
+
+# Make sure it's executable w/ chmod
+RUN chmod +x instant_dmv_backend
+
+# Use ENTRYPOINT
+ENTRYPOINT ["./instant_dmv_backend"]

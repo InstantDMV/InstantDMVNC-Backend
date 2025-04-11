@@ -4,7 +4,7 @@ FROM rust:1.85-slim
 WORKDIR /app
 
 # Cache dependencies first (for faster rebuilds)
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release
 RUN rm -r src

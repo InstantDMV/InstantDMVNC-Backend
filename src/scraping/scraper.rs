@@ -1,17 +1,17 @@
-use captcha_oxide::CaptchaSolver;
-use captcha_oxide::CaptchaTask;
-use captcha_oxide::captcha_types::recaptcha::RecaptchaV2;
-use country::Country;
-use dotenv::dotenv;
-use postal_code::PostalCode;
-use serde_json::Value;
-
+use crate::models::dmvservice::DMVService;
 use crate::models::offices::OfficeAvailability;
 use crate::scraping::constants::*;
 use anyhow::Result;
+use captcha_oxide::CaptchaSolver;
+use captcha_oxide::CaptchaTask;
+use captcha_oxide::captcha_types::recaptcha::RecaptchaV2;
 use chrono::{Datelike, Local, NaiveDate};
+use country::Country;
+use dotenv::dotenv;
 use once_cell::sync::Lazy;
+use postal_code::PostalCode;
 use regex::Regex;
+use serde_json::Value;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -72,9 +72,10 @@ impl NCDMVScraper {
         _zip_code: String, // TODO use this
         refresh_interval_secs: u64,
         tx: mpsc::Sender<Vec<OfficeAvailability>>,
+        selector: String,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
-        _ = caps.set_headless(); //for debugging comment this line
+        // _ = caps.set_headless(); //for debugging comment this line
 
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;
@@ -101,7 +102,7 @@ impl NCDMVScraper {
 
         let elements = driver.find_all(By::Css("div.form-control-child")).await?;
         for elem in elements {
-            if elem.text().await?.contains("State ID") {
+            if elem.text().await?.contains(&selector) {
                 elem.click().await?;
                 break;
             }
@@ -521,6 +522,7 @@ impl NCDMVScraper {
     pub async fn start_appointment_stream(
         self: Arc<Self>,
         refresh_interval_secs: u64,
+        service_type: DMVService,
     ) -> mpsc::Receiver<Vec<OfficeAvailability>> {
         let (tx, rx) = mpsc::channel(117); // Buffer size of 117 for 117 dmvs in NC
         info!("scraping nc dmv data with date checking");
@@ -531,7 +533,12 @@ impl NCDMVScraper {
 
         tokio::spawn(async move {
             if let Err(e) = scraper
-                .stream_available_appointments(zip_code, refresh_interval_secs, tx)
+                .stream_available_appointments(
+                    zip_code,
+                    refresh_interval_secs,
+                    tx,
+                    service_type.selector().to_string(),
+                )
                 .await
             {
                 error!("Error starting appointment stream: {:?}", e);

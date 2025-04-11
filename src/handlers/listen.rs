@@ -1,4 +1,5 @@
 use crate::cache::OFFICE_CACHE;
+use crate::models::dmvservice::DMVService;
 use crate::scraping::scraper::NCDMVScraper;
 use anyhow::Result;
 use std::sync::Arc;
@@ -10,12 +11,16 @@ pub async fn listen(
     name: String,
     phone_number: String,
     email: String,
+    service_type: DMVService,
 ) -> Result<()> {
     task::spawn(async move {
         match NCDMVScraper::new(zipcode.clone(), max_distance, name, phone_number, email).await {
             Ok(scraper) => {
                 let scraper = Arc::new(scraper);
-                let mut receiver = scraper.clone().start_appointment_stream(1).await;
+                let mut receiver = scraper
+                    .clone()
+                    .start_appointment_stream(1, service_type)
+                    .await;
 
                 while let Some(offices) = receiver.recv().await {
                     for office in offices {

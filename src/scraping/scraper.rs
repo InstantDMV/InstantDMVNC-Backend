@@ -76,7 +76,7 @@ impl NCDMVScraper {
         dates: Vec<String>,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
-        // _ = caps.set_headless(); //for debugging comment this line
+        _ = caps.set_headless(); //for debugging comment this line
 
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;

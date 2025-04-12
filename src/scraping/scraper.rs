@@ -78,9 +78,26 @@ impl NCDMVScraper {
         let mut caps = DesiredCapabilities::chrome();
         _ = caps.set_headless(); //for debugging comment this line
 
+        //bc we run in a vm these help for optimization
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;
         caps.add_arg("--disable-gpu")?;
+        caps.add_arg("--disable-extensions")?;
+        caps.add_arg("--disable-background-networking")?;
+        caps.add_arg("--disable-software-rasterizer")?;
+        caps.add_arg("--disable-default-apps")?;
+        caps.add_arg("--disable-sync")?;
+        caps.add_arg("--metrics-recording-only")?;
+        caps.add_arg("--mute-audio")?;
+        caps.add_arg("--no-first-run")?;
+        caps.add_arg("--disable-notifications")?;
+        caps.add_arg("--disable-background-timer-throttling")?;
+        caps.add_arg("--disable-renderer-backgrounding")?;
+        caps.add_arg("--disable-client-side-phishing-detection")?;
+        caps.add_arg("--disable-component-update")?;
+        caps.add_arg("--disable-domain-reliability")?;
+        caps.add_arg("--disable-features=Translate,BackForwardCache")?;
+        caps.add_arg("--single-process")?;
 
         let driver = WebDriver::new("http://localhost:60103", caps).await?;
         let driver = Arc::new(driver);
@@ -99,7 +116,7 @@ impl NCDMVScraper {
             .await?;
 
         // Wait for navigation
-        sleep(Duration::from_secs(10)).await;
+        sleep(Duration::from_secs(20)).await;
 
         let elements = driver.find_all(By::Css("div.form-control-child")).await?;
         for elem in elements {
@@ -109,7 +126,7 @@ impl NCDMVScraper {
             }
         }
 
-        sleep(Duration::from_secs(10)).await;
+        sleep(Duration::from_secs(20)).await;
 
         /*
         TODO -> i need to reinput zipcode after each go
@@ -155,7 +172,7 @@ impl NCDMVScraper {
             }
 
             // Wait for page to stabilize after refresh
-            sleep(Duration::from_secs(3)).await;
+            sleep(Duration::from_secs(1)).await;
         }
 
         Ok(())
@@ -238,10 +255,15 @@ impl NCDMVScraper {
                 .unwrap()
                 .contains(&office_availability.office_name)
             {
+                info!("{:?}", *FALSLEY_ENABLED_LOCATIONS.lock().unwrap());
                 continue; // skip
             }
 
             if is_reservable {
+                info!(
+                    "checking office {} as it appears reservable",
+                    office_availability.office_name
+                );
                 if let Ok(_) = office_el.click().await {
                     // Wait for calendar to load
                     sleep(Duration::from_secs(3)).await;
@@ -539,6 +561,7 @@ impl NCDMVScraper {
                     .unwrap()
                     .contains(&office_availability.office_name.clone())
                 {
+                    info!("clearing locations...");
                     FALSLEY_ENABLED_LOCATIONS.lock().unwrap().clear();
                 }
             }

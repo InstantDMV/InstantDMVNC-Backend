@@ -77,7 +77,9 @@ impl NCDMVScraper {
         dates: Vec<String>,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
-        _ = caps.set_headless(); //for debugging comment this line
+
+        //bc we run in a vm these help for optimization
+        caps.add_arg("--headless")?;
 
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
         caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;

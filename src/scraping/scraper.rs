@@ -568,12 +568,17 @@ impl NCDMVScraper {
                     .contains(&office_availability.office_name)
                 {
                     info!("clearing locations...");
-                    FALSLEY_ENABLED_LOCATIONS.lock().unwrap().clear();
+                    FALSLEY_ENABLED_LOCATIONS
+                        .lock()
+                        .unwrap()
+                        .retain(|x| x != &office_availability.office_name);
                 }
             }
 
             results.push(office_availability);
         }
+
+        driver.clone().quit().await?;
 
         Ok(results)
     }

@@ -84,22 +84,6 @@ impl NCDMVScraper {
         caps.add_arg("--disable-dev-shm-usage")?;
         caps.add_arg("--disable-gpu")?;
         caps.add_arg("--disable-setuid-sandbox")?;
-        caps.add_arg("--disable-extensions")?;
-        caps.add_arg("--disable-background-networking")?;
-        caps.add_arg("--disable-software-rasterizer")?;
-        caps.add_arg("--disable-default-apps")?;
-        caps.add_arg("--disable-sync")?;
-        caps.add_arg("--metrics-recording-only")?;
-        caps.add_arg("--mute-audio")?;
-        caps.add_arg("--no-first-run")?;
-        caps.add_arg("--disable-notifications")?;
-        caps.add_arg("--disable-background-timer-throttling")?;
-        caps.add_arg("--disable-renderer-backgrounding")?;
-        caps.add_arg("--disable-client-side-phishing-detection")?;
-        caps.add_arg("--disable-component-update")?;
-        caps.add_arg("--disable-domain-reliability")?;
-        caps.add_arg("--disable-features=Translate,BackForwardCache")?;
-        caps.add_arg("--single-process")?;
 
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
         caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;

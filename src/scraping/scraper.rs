@@ -82,6 +82,7 @@ impl NCDMVScraper {
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;
         caps.add_arg("--disable-gpu")?;
+        caps.add_arg("--disable-setuid-sandbox")?;
         caps.add_arg("--disable-extensions")?;
         caps.add_arg("--disable-background-networking")?;
         caps.add_arg("--disable-software-rasterizer")?;

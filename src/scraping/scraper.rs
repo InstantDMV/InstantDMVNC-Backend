@@ -31,7 +31,8 @@ the client has just not finished the form and submitted
 this tracks those so we dont miss anything
 */
 
-static FALSLEY_ENABLED_LOCATIONS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
+static FALSLEY_ENABLED_LOCATIONS: Lazy<Mutex<Vec<String>>> =
+    Lazy::new(|| Mutex::new(vec!["Fuquay-Varina".to_string()]));
 
 pub struct NCDMVScraper {
     name: String,
@@ -87,6 +88,10 @@ impl NCDMVScraper {
         caps.add_arg("--disable-default-apps")?;
         caps.add_arg("--disable-sync")?;
         caps.add_arg("--remote-debugging-port=0")?;
+        caps.add_arg("--disable-gpu")?;
+        caps.add_arg("--no-sandbox")?;
+        caps.add_arg("--disable-dev-shm-usage")?;
+
         caps.add_arg(format!("--user-data-dir={}", tmp_dir.path().display()).as_str())?;
 
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
@@ -255,6 +260,7 @@ impl NCDMVScraper {
                 .lock()
                 .unwrap()
                 .contains(&office_availability.office_name)
+                && is_reservable
             {
                 info!("{:?}", *FALSLEY_ENABLED_LOCATIONS.lock().unwrap());
                 continue; // skip
@@ -559,7 +565,7 @@ impl NCDMVScraper {
                 if FALSLEY_ENABLED_LOCATIONS
                     .lock()
                     .unwrap()
-                    .contains(&office_availability.office_name.clone())
+                    .contains(&office_availability.office_name)
                 {
                     info!("clearing locations...");
                     FALSLEY_ENABLED_LOCATIONS.lock().unwrap().clear();

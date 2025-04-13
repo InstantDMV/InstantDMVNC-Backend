@@ -176,6 +176,14 @@ impl NCDMVScraper {
             sleep(Duration::from_secs(1)).await;
         }
 
+        info!("Quitting Chrome session");
+
+        if let Ok(driver_inner) = Arc::try_unwrap(driver) {
+            driver_inner.quit().await?;
+        } else {
+            error!("Driver Arc still has other references — cannot quit cleanly");
+        }
+
         Ok(())
     }
 
@@ -553,7 +561,6 @@ impl NCDMVScraper {
                         sleep(Duration::from_secs(1)).await;
                     }
 
-                    driver.clone().quit().await?;
                     break;
                 }
             } else {

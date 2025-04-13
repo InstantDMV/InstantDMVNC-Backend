@@ -1,10 +1,16 @@
-FROM rust:1.85-slim
+FROM debian:bookworm
+
+# Install Rust
+RUN apt-get update && apt-get install -y curl build-essential \
+    && curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain 1.85.0 \
+    && . "$HOME/.cargo/env"
+
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-# Install dependencies for Chrome and Rust compilation
+# Install dependencies for Chrome & headless usage
 RUN apt-get update && apt-get install -y \
-    curl \
     unzip \
     wget \
     jq \
@@ -12,7 +18,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
     libssl-dev \
-    build-essential \
     netcat-openbsd \
     fonts-liberation \
     libx11-6 \
@@ -47,12 +52,11 @@ RUN CHROME_VERSION=$(curl -sSL https://googlechromelabs.github.io/chrome-for-tes
 
 # Copy and build Rust app
 COPY . .
-RUN cargo build --release
+RUN . "$HOME/.cargo/env" && cargo build --release
 
 EXPOSE 60103
 EXPOSE 8080
 
-# Start ChromeDriver, wait until it's ready, then start your backend
 CMD bash -c '\
     chromedriver --port=60103 & \
     while ! nc -z localhost 60103; do echo "Waiting for ChromeDriver..."; sleep 0.5; done; \

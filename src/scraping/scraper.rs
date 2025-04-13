@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use tempfile::tempdir;
 use thirtyfour::prelude::*;
 use thirtyfour::support::sleep;
 use tokio::sync::mpsc;
@@ -77,6 +78,7 @@ impl NCDMVScraper {
         dates: Vec<String>,
     ) -> WebDriverResult<()> {
         let mut caps = DesiredCapabilities::chrome();
+        let tmp_dir = tempdir()?;
 
         //bc we run in a vm these help for optimization
         caps.add_arg("--headless")?;
@@ -85,13 +87,7 @@ impl NCDMVScraper {
         caps.add_arg("--disable-default-apps")?;
         caps.add_arg("--disable-sync")?;
         caps.add_arg("--remote-debugging-port=0")?;
-        caps.add_arg(
-            format!(
-                "--user-data-dir=/tmp/unique-profile-{}",
-                uuid::Uuid::new_v4()
-            )
-            .as_str(),
-        )?;
+        caps.add_arg(format!("--user-data-dir={}", tmp_dir.path().display()).as_str())?;
 
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
         caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;

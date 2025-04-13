@@ -79,12 +79,6 @@ impl NCDMVScraper {
         let mut caps = DesiredCapabilities::chrome();
         _ = caps.set_headless(); //for debugging comment this line
 
-        //bc we run in a vm these help for optimization
-        caps.add_arg("--no-sandbox")?;
-        caps.add_arg("--disable-dev-shm-usage")?;
-        caps.add_arg("--disable-gpu")?;
-        caps.add_arg("--disable-setuid-sandbox")?;
-
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
         caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;
 

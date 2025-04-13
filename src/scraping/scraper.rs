@@ -20,6 +20,7 @@ use thirtyfour::support::sleep;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{error, info};
+use uuid::Uuid;
 
 /**
 NC DMV has a bug where when an appointment is in the proccess of
@@ -99,6 +100,9 @@ impl NCDMVScraper {
         caps.add_arg("--disable-domain-reliability")?;
         caps.add_arg("--disable-features=Translate,BackForwardCache")?;
         caps.add_arg("--single-process")?;
+
+        let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
+        caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;
 
         let driver = WebDriver::new("http://localhost:60103", caps).await?;
         let driver = Arc::new(driver);

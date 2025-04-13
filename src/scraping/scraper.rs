@@ -80,6 +80,18 @@ impl NCDMVScraper {
 
         //bc we run in a vm these help for optimization
         caps.add_arg("--headless")?;
+        caps.add_arg("--no-first-run")?;
+        caps.add_arg("--disable-popup-blocking")?;
+        caps.add_arg("--disable-default-apps")?;
+        caps.add_arg("--disable-sync")?;
+        caps.add_arg("--remote-debugging-port=0")?;
+        caps.add_arg(
+            format!(
+                "--user-data-dir=/tmp/unique-profile-{}",
+                uuid::Uuid::new_v4()
+            )
+            .as_str(),
+        )?;
 
         let user_data_dir = format!("/tmp/chrome-user-data-{}", Uuid::new_v4());
         caps.add_arg(&format!("--user-data-dir={}", user_data_dir))?;

@@ -1,10 +1,19 @@
-use crate::handlers::listen::listen;
-use crate::models::dmvservice::DMVService;
 use actix_web::{HttpResponse, Responder, get, web};
+use mongodb::{Client, Collection, options::ClientOptions};
+use serde::{Deserialize, Serialize};
+use std::env;
 use std::error::Error;
 use std::fmt;
+use tokio::sync::OnceCell;
 
-// Custom error type for service not found
+use crate::handlers::listen::listen;
+use crate::models::dmvservice::DMVService;
+
+// --------------------------------------------------------------------------
+// DMV Service Definition
+// --------------------------------------------------------------------------
+
+// Custom error type for an unknown service title.
 #[derive(Debug)]
 pub struct ServiceNotFoundError {
     title: String,
@@ -18,7 +27,7 @@ impl fmt::Display for ServiceNotFoundError {
 
 impl Error for ServiceNotFoundError {}
 
-// Function to get service type from title
+/// Matches a service title to a DMVService variant.
 fn get_service_by_title(title: &str) -> Result<DMVService, ServiceNotFoundError> {
     match title {
         "Driver License - First Time" => Ok(DMVService::FirstTime {
@@ -79,21 +88,61 @@ fn get_service_by_title(title: &str) -> Result<DMVService, ServiceNotFoundError>
     }
 }
 
+// --------------------------------------------------------------------------
+// MongoDB Asynchronous Client Initialization Using tokio::sync::OnceCell
+// --------------------------------------------------------------------------
+
+/// The appointment request document to be stored in MongoDB.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppointmentRequest {
+    pub zipcode: String,
+    pub max_distance: u16,
+    pub name: String,
+    pub phone_number: String,
+    pub email: String,
+    pub service_title: String,
+    pub selector: String,
+    pub dates: Vec<String>,
+}
+
+/// Global asynchronous MongoDB client using `OnceCell`.
+static MONGO_CLIENT: OnceCell<Client> = OnceCell::const_new();
+
+/// Asynchronously get or initialize the global MongoDB client.
+pub async fn get_mongo_client() -> &'static Client {
+    MONGO_CLIENT
+        .get_or_init(|| async {
+            let uri = env::var("MONGODB_URI").expect("MONGODB_URI must be set");
+            let client_options = ClientOptions::parse(&uri)
+                .await
+                .expect("Failed to parse MongoDB options");
+            Client::with_options(client_options).expect("Failed to initialize MongoDB client")
+        })
+        .await
+}
+
+/// Asynchronously obtain the MongoDB collection for appointment requests.
+pub async fn get_appointment_collection() -> Collection<AppointmentRequest> {
+    let client = get_mongo_client().await;
+    let db = client.database("InstantDMV");
+    db.collection::<AppointmentRequest>("users_nc")
+}
+
+// --------------------------------------------------------------------------
+// Actix-web Handler and Server Setup
+// --------------------------------------------------------------------------
+
 #[get("/test/{zipcode}/{max_distance}/{name}/{phone_number}/{email}/{service_title}/{dates}")]
 async fn test(
     path: web::Path<(String, u16, String, String, String, String, String)>,
 ) -> impl Responder {
-    // Destructure the tuple into individual parameters.
     let (zipcode, max_distance, name, phone_number, email, service_title, dates_str) =
         path.into_inner();
 
-    // Parse the dates string into a Vec<String>. The dates are expected to be comma-separated.
-    let dates: Vec<String> = dates_str
-        .split(',')
-        .map(|date| date.trim().to_string())
-        .collect();
+    // Parse the comma-separated dates.
+    let dates: Vec<String> = dates_str.split(',').map(|s| s.trim().to_string()).collect();
 
-    // Get service type from title
+    // Get the DMV service by title.
     let service_type = match get_service_by_title(&service_title) {
         Ok(service) => service,
         Err(e) => {
@@ -102,7 +151,26 @@ async fn test(
         }
     };
 
-    // Pass the dates vector to the listen function.
+    // Create an appointment request document.
+    let new_request = AppointmentRequest {
+        zipcode: zipcode.clone(),
+        max_distance,
+        name: name.clone(),
+        phone_number: phone_number.clone(),
+        email: email.clone(),
+        service_title: service_title.clone(),
+        selector: service_type.selector().to_string(),
+        dates: dates.clone(),
+    };
+
+    // Insert the appointment request into MongoDB asynchronously.
+    let collection = get_appointment_collection().await;
+    if let Err(e) = collection.insert_one(new_request).await {
+        eprintln!("Failed to insert into MongoDB: {:?}", e);
+        return HttpResponse::InternalServerError().body("Failed to store request.");
+    }
+
+    // Call the listen function (business logic).
     match listen(
         zipcode,
         max_distance,
@@ -110,7 +178,7 @@ async fn test(
         phone_number,
         email,
         service_type,
-        dates, // The new parameter containing the list of dates.
+        dates,
     )
     .await
     {
@@ -122,6 +190,7 @@ async fn test(
     }
 }
 
+/// Configures the Actix Web application routes.
 pub fn init(cfg: &mut web::ServiceConfig) {
     cfg.service(test);
 }

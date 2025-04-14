@@ -504,7 +504,7 @@ impl NCDMVScraper {
 
                     info!("solving captcha");
                     dotenv().ok();
-                    let key = "717c749b232f1a43c78bc45371d10972";
+                    let key = std::env::var("TWOCAPTCHA_KEY").expect("no 2captcha key set");
                     let solver = CaptchaSolver::new(key);
 
                     let args = RecaptchaV2::builder()
@@ -577,8 +577,6 @@ impl NCDMVScraper {
 
             results.push(office_availability);
         }
-
-        driver.clone().quit().await?;
 
         Ok(results)
     }

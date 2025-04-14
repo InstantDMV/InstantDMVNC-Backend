@@ -1,9 +1,13 @@
 use actix_web::{HttpResponse, Responder, get, web};
-use mongodb::{Client, Collection, options::ClientOptions};
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::error::Error;
 use std::fmt;
+
+#[cfg(not(debug_assertions))]
+use mongodb::{Client, Collection, options::ClientOptions};
+#[cfg(not(debug_assertions))]
+use std::env;
+#[cfg(not(debug_assertions))]
 use tokio::sync::OnceCell;
 
 use crate::handlers::listen::listen;

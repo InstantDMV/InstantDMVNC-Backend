@@ -106,9 +106,11 @@ pub struct AppointmentRequest {
 }
 
 /// Global asynchronous MongoDB client using `OnceCell`.
+#[cfg(not(debug_assertions))]
 static MONGO_CLIENT: OnceCell<Client> = OnceCell::const_new();
 
 /// Asynchronously get or initialize the global MongoDB client.
+#[cfg(not(debug_assertions))]
 pub async fn get_mongo_client() -> &'static Client {
     MONGO_CLIENT
         .get_or_init(|| async {
@@ -122,6 +124,7 @@ pub async fn get_mongo_client() -> &'static Client {
 }
 
 /// Asynchronously obtain the MongoDB collection for appointment requests.
+#[cfg(not(debug_assertions))]
 pub async fn get_appointment_collection() -> Collection<AppointmentRequest> {
     let client = get_mongo_client().await;
     let db = client.database("InstantDMV");
@@ -152,6 +155,7 @@ async fn test(
     };
 
     // Create an appointment request document.
+    #[cfg(not(debug_assertions))]
     let new_request = AppointmentRequest {
         zipcode: zipcode.clone(),
         max_distance,
@@ -163,11 +167,14 @@ async fn test(
         dates: dates.clone(),
     };
 
-    // Insert the appointment request into MongoDB asynchronously.
-    let collection = get_appointment_collection().await;
-    if let Err(e) = collection.insert_one(new_request).await {
-        eprintln!("Failed to insert into MongoDB: {:?}", e);
-        return HttpResponse::InternalServerError().body("Failed to store request.");
+    // Insert the appointment request into MongoDB asynchronously if in release mode
+    #[cfg(not(debug_assertions))]
+    {
+        let collection = get_appointment_collection().await;
+        if let Err(e) = collection.insert_one(new_request).await {
+            eprintln!("Failed to insert into MongoDB: {:?}", e);
+            return HttpResponse::InternalServerError().body("Failed to store request.");
+        }
     }
 
     // Call the listen function (business logic).

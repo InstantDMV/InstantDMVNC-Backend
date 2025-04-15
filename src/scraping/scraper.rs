@@ -93,12 +93,8 @@ impl NCDMVScraper {
         caps.add_arg("--disable-gpu")?;
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;
-
-        // Required Chrome args for headless or automation
         caps.add_arg("--use-fake-ui-for-media-stream")?;
         caps.add_arg("--use-fake-device-for-media-stream")?;
-        caps.add_arg("--no-sandbox")?;
-        caps.add_arg("--disable-dev-shm-usage")?;
 
         caps.add_arg(format!("--user-data-dir={}", tmp_dir.path().display()).as_str())?;
 

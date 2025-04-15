@@ -2,9 +2,6 @@
 pub const BASE_URL: &str =
     "https://skiptheline.ncdot.gov/Webapp/Appointment/Index/a7ade79b-996d-4971-8766-97feb75254de";
 
-pub const WINDOW_WIDTH: u32 = 1280;
-pub const WINDOW_HEIGHT: u32 = 775;
-
 // HTML element selectors used in automation
 pub const BUTTON_MAKE_APPT_ID: &str = "cmdMakeAppt";
 

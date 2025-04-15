@@ -104,19 +104,6 @@ impl NCDMVScraper {
         let driver = WebDriver::new("http://localhost:60103", caps).await?;
         let driver = Arc::new(driver);
 
-        driver
-            .set_window_rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)
-            .await?;
-
-        driver.goto(BASE_URL).await?;
-
-        // Initial navigation
-        driver
-            .find(By::Id(BUTTON_MAKE_APPT_ID))
-            .await?
-            .click()
-            .await?;
-
         let zipcode_data = zipcode::load_zipcode_data("./zipcodetolatlong.csv");
 
         info!("{}", zip_code);
@@ -125,6 +112,8 @@ impl NCDMVScraper {
 
         let latitude = coordinates.0;
         let longitude = coordinates.1;
+
+        driver.goto(BASE_URL).await?;
 
         let grant_command = ChromeCommand::ExecuteCdpCommand(
             "Browser.grantPermissions".to_string(),
@@ -147,6 +136,13 @@ impl NCDMVScraper {
         );
 
         driver.cmd(spoof_location_command).await?;
+
+        // Initial navigation
+        driver
+            .find(By::Id(BUTTON_MAKE_APPT_ID))
+            .await?
+            .click()
+            .await?;
 
         sleep(Duration::from_secs(10)).await;
 

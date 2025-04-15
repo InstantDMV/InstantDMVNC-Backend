@@ -9,6 +9,7 @@ anyhow = "1.0.97"
 captcha_oxide = "5.2.0"
 chrono = { version = "0.4.40", features = ["serde"] }
 country = "0.5.0"
+csv = "1.3.1"
 dotenv = "0.15.0"
 moka = { version = "0.12.10", features = ["future"] }
 mongodb = "3.2.3"

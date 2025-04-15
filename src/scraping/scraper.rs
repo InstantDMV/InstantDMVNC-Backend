@@ -1,5 +1,6 @@
 use crate::models::dmvservice::DMVService;
 use crate::models::offices::OfficeAvailability;
+use crate::models::zipcode;
 use crate::scraping::constants::*;
 use anyhow::Result;
 use captcha_oxide::CaptchaSolver;
@@ -12,10 +13,12 @@ use once_cell::sync::Lazy;
 use postal_code::PostalCode;
 use regex::Regex;
 use serde_json::Value;
+use serde_json::json;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::tempdir;
+use thirtyfour::extensions::cdp::ChromeCommand;
 use thirtyfour::prelude::*;
 use thirtyfour::support::sleep;
 use tokio::sync::mpsc;
@@ -31,8 +34,7 @@ the client has just not finished the form and submitted
 this tracks those so we dont miss anything
 */
 
-static FALSLEY_ENABLED_LOCATIONS: Lazy<Mutex<Vec<String>>> =
-    Lazy::new(|| Mutex::new(vec!["Fuquay-Varina".to_string()]));
+static FALSLEY_ENABLED_LOCATIONS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
 
 pub struct NCDMVScraper {
     name: String,
@@ -72,7 +74,7 @@ impl NCDMVScraper {
 
     pub async fn stream_available_appointments(
         self: Arc<Self>,
-        _zip_code: String, // TODO use this
+        zip_code: String,
         refresh_interval_secs: u64,
         tx: mpsc::Sender<Vec<OfficeAvailability>>,
         selector: String,
@@ -89,6 +91,12 @@ impl NCDMVScraper {
         caps.add_arg("--disable-sync")?;
         caps.add_arg("--remote-debugging-port=0")?;
         caps.add_arg("--disable-gpu")?;
+        caps.add_arg("--no-sandbox")?;
+        caps.add_arg("--disable-dev-shm-usage")?;
+
+        // Required Chrome args for headless or automation
+        caps.add_arg("--use-fake-ui-for-media-stream")?;
+        caps.add_arg("--use-fake-device-for-media-stream")?;
         caps.add_arg("--no-sandbox")?;
         caps.add_arg("--disable-dev-shm-usage")?;
 
@@ -113,39 +121,62 @@ impl NCDMVScraper {
             .click()
             .await?;
 
-        // Wait for navigation
-        sleep(Duration::from_secs(20)).await;
+        let zipcode_data = zipcode::load_zipcode_data("./zipcodetolatlong.csv");
 
-        let elements = driver.find_all(By::Css("div.form-control-child")).await?;
-        for elem in elements {
-            if elem.text().await?.contains(&selector) {
-                elem.click().await?;
-                break;
+        info!("{}", zip_code);
+
+        let coordinates = zipcode_data.get(&zip_code).unwrap();
+
+        let latitude = coordinates.0;
+        let longitude = coordinates.1;
+
+        let grant_command = ChromeCommand::ExecuteCdpCommand(
+            "Browser.grantPermissions".to_string(),
+            json!({
+                "permissions": ["geolocation"],
+                "origin": "https://skiptheline.ncdot.gov"
+            }),
+        );
+
+        driver.cmd(grant_command).await?;
+
+        // Send Chrome DevTools Protocol command to override geolocation
+        let spoof_location_command = ChromeCommand::ExecuteCdpCommand(
+            "Page.setGeolocationOverride".to_string(),
+            json!({
+                "latitude": latitude,
+                "longitude": longitude,
+                "accuracy": 100.0
+            }),
+        );
+
+        driver.cmd(spoof_location_command).await?;
+
+        sleep(Duration::from_secs(10)).await;
+
+        // Wait for navigation
+        'outer: loop {
+            let elements = driver.find_all(By::Css("div.form-control-child")).await?;
+            for elem in elements {
+                if elem.text().await?.contains(&selector) {
+                    if elem.is_clickable().await? {
+                        elem.click().await?;
+                        break 'outer;
+                    }
+                }
             }
         }
 
-        sleep(Duration::from_secs(20)).await;
-
-        /*
-        TODO -> i need to reinput zipcode after each go
-        */
-
-        // let search_input = driver.find(By::Id(SEARCH_INPUT_ID)).await?;
-        // search_input.click().await?;
-        // search_input.send_keys(&zip_code).await?;
-
-        // sleep(Duration::from_secs(10)).await;
-        // driver
-        //     .find(By::Css(INPUT_RESULTS_SELECTOR))
-        //     .await?
-        //     .click()
-        //     .await?;
+        sleep(Duration::from_secs(10)).await;
 
         // Now that we're on the results page, start checking periodically
         let mut refresh_interval = interval(Duration::from_secs(refresh_interval_secs));
 
+        sleep(Duration::from_secs(1)).await;
+
         loop {
             refresh_interval.tick().await;
+
             let scraper = Arc::clone(&self);
 
             match scraper
@@ -527,9 +558,9 @@ impl NCDMVScraper {
                     info!("{}", token);
 
                     let js = r#"
-                                                                document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
-                                                                document.getElementById('g-recaptcha-response').style.display = 'block';
-                                                            "#;
+                        document.getElementById('g-recaptcha-response').innerHTML = arguments[0];
+                        document.getElementById('g-recaptcha-response').style.display = 'block';
+                    "#;
 
                     info!("executing js for captcha");
 
@@ -537,8 +568,8 @@ impl NCDMVScraper {
                     driver.execute(js, Arc::from(args)).await?;
 
                     let js_callback = r#"
-                                                                CaptchaCallBack(arguments[0]);
-                                                            "#;
+                        CaptchaCallBack(arguments[0]);
+                    "#;
 
                     driver
                         .execute(

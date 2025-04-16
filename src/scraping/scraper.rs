@@ -1,4 +1,5 @@
 use crate::models::dmvservice::DMVService;
+use crate::models::email::RegisterRequest;
 use crate::models::offices::OfficeAvailability;
 use crate::models::zipcode;
 use crate::scraping::constants::*;
@@ -12,8 +13,10 @@ use dotenv::dotenv;
 use once_cell::sync::Lazy;
 use postal_code::PostalCode;
 use regex::Regex;
+use reqwest::Client;
 use serde_json::Value;
 use serde_json::json;
+use std::error::Error;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -25,7 +28,6 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{error, info};
 use uuid::Uuid;
-
 /**
 NC DMV has a bug where when an appointment is in the proccess of
 being booked it shows as blue (possible to be booked) when really it is taken,
@@ -506,10 +508,20 @@ impl NCDMVScraper {
                     sleep(Duration::from_millis(150)).await;
                     driver.find(By::Id(EMAIL_INPUT_ID)).await?.click().await?;
                     sleep(Duration::from_millis(150)).await;
+
+                    let last_date = Self::latest_date(dates.clone()).await.unwrap();
+                    let proxy_email = Self::register_proxy_email(
+                        &self.email,
+                        &last_date,
+                        "http://localhost:8000",
+                    )
+                    .await
+                    .unwrap();
+
                     driver
                         .find(By::Id(EMAIL_INPUT_ID))
                         .await?
-                        .send_keys(self.email.as_str())
+                        .send_keys(&proxy_email)
                         .await?;
 
                     sleep(Duration::from_millis(150)).await;
@@ -602,6 +614,44 @@ impl NCDMVScraper {
         }
 
         Ok(results)
+    }
+
+    async fn latest_date(dates: Vec<String>) -> Option<String> {
+        dates
+            .into_iter()
+            .filter_map(|s| {
+                NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                    .ok()
+                    .map(|d| (d, s))
+            })
+            .max_by_key(|(d, _)| *d)
+            .map(|(_, original)| original)
+    }
+
+    async fn register_proxy_email(
+        real_email: &str,
+        expire_date: &str,
+        api_url: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        let client = Client::new();
+        let body = RegisterRequest {
+            real_email,
+            expire_date,
+        };
+
+        let res = client
+            .post(format!("{}/register", api_url))
+            .json(&body)
+            .send()
+            .await?;
+
+        if res.status().is_success() {
+            let parsed: crate::models::email::RegisterResponse = res.json().await?;
+            Ok(parsed.proxy_email)
+        } else {
+            let error_text = res.text().await?;
+            Err(format!("API error: {}", error_text).into())
+        }
     }
 
     pub async fn start_appointment_stream(

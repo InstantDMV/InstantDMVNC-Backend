@@ -13,7 +13,7 @@ async fn main() -> std::io::Result<()> {
     dotenv().expect("Failed to load .env file");
 
     HttpServer::new(|| App::new().configure(routes::init))
-        .bind(("0.0.0.0", 8675))?
+        .bind(("0.0.0.0", 80))?
         .run()
         .await
 }

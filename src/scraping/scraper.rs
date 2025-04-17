@@ -534,7 +534,7 @@ impl NCDMVScraper {
                     driver
                         .find(By::Id(CONFIRM_EMAIL_INPUT_ID))
                         .await?
-                        .send_keys(self.email.as_str())
+                        .send_keys(proxy_email)
                         .await?;
 
                     info!("solving captcha");

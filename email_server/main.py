@@ -1,153 +1,136 @@
 import asyncio
-import httpx
-import smtplib
-import aiosqlite
-from fastapi import FastAPI
-from email.message import EmailMessage
+import logging
+import os
+import re
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, HTTPException
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr
-from typing import Optional
-from datetime import datetime
+import httpx
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 import uvicorn
 
+# ─── Configuration ─────────────────────────────────────────────────────────────
+load_dotenv()
+
+MAILTM_API = os.getenv("MAILTM_API", "https://api.mail.tm")
+POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 15))
+
+MONGODB_URI = os.getenv("MONGODB_URI")
+MONGODB_DB = os.getenv("MONGODB_DB", "InstantDMV")
+MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "email_map")
+
+# ─── Logging Setup ─────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("email_link_clicker")
+
+# ─── FastAPI + Database Initialization ────────────────────────────────────────
 app = FastAPI()
-
-MAILTM_API = "https://api.mail.tm"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_USERNAME = "your@gmail.com"
-SMTP_PASSWORD = "your_password"
-
-DB_PATH = "email_map.db"
-
-# ========== DB INIT ==========
-
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS email_map (
-                real_email TEXT PRIMARY KEY,
-                proxy_email TEXT,
-                proxy_id TEXT,
-                token TEXT,
-                expire_date TEXT
-            )
-        """)
-        await db.commit()
-
-@app.on_event("startup")
-async def startup_event():
-    await init_db()
-    asyncio.create_task(poll_mailtm())
-
-# ========== MODELS ==========
+client = AsyncIOMotorClient(MONGODB_URI)
+db = client["InstantDMV"]
+email_map = db["mailusers"]
 
 class RegisterRequest(BaseModel):
     real_email: EmailStr
-    expire_date: datetime  # ISO8601 format
+    expire_date: datetime
 
 class RegisterResponse(BaseModel):
     proxy_email: str
 
-# ========== HELPERS ==========
+@app.on_event("startup")
+async def startup_event():
+    await email_map.create_index("real_email", unique=True)
+    app.state.http = httpx.AsyncClient(base_url=MAILTM_API)
+    asyncio.create_task(poll_mailtm())
 
-async def mailtm_create_account() -> dict:
-    async with httpx.AsyncClient() as client:
-        domain = (await client.get(f"{MAILTM_API}/domains")).json()["hydra:member"][0]["domain"]
-        username = f"user{str(hash(asyncio.get_event_loop().time()))[:8]}"
-        email = f"{username}@{domain}"
-        password = "SuperSecure123!"
+@app.on_event("shutdown")
+async def shutdown_event():
+    await app.state.http.aclose()
 
-        await client.post(f"{MAILTM_API}/accounts", json={
-            "address": email,
-            "password": password
-        })
-
-        token_resp = await client.post(f"{MAILTM_API}/token", json={
-            "address": email,
-            "password": password
-        })
-
-        token = token_resp.json()["token"]
-
-        # Get account ID
-        headers = {"Authorization": f"Bearer {token}"}
-        account = (await client.get(f"{MAILTM_API}/me", headers=headers)).json()
-        return {
-            "email": email,
-            "id": account["id"],
-            "token": token
-        }
-
-async def forward_email(to_email: str, subject: str, content: str):
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = "forwarder@instantdmv.xyz"
-    msg["To"] = to_email
-    msg.set_content(content)
-
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-        print(f"Forwarded to {to_email}")
-    except Exception as e:
-        print(f"Failed to forward: {e}")
-
-# ========== ROUTES ==========
-
+# ─── Register Endpoint ────────────────────────────────────────────────────────
 @app.post("/register", response_model=RegisterResponse)
-async def register_forwarder(req: RegisterRequest):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT proxy_email FROM email_map WHERE real_email = ?", (req.real_email,))
-        row = await cursor.fetchone()
-        if row:
-            return {"proxy_email": row[0]}
+async def register(req: RegisterRequest):
+    existing = await email_map.find_one({"real_email": req.real_email})
+    if existing:
+        return {"proxy_email": existing["proxy_email"]}
 
-        acct = await mailtm_create_account()
-        await db.execute(
-            "INSERT INTO email_map (real_email, proxy_email, proxy_id, token, expire_date) VALUES (?, ?, ?, ?, ?)",
-            (req.real_email, acct["email"], acct["id"], acct["token"], req.expire_date.isoformat())
-        )
-        await db.commit()
-        return {"proxy_email": acct["email"]}
+    # Create Mail.tm account
+    doms = (await app.state.http.get("/domains")).json()["hydra:member"]
+    domain = doms[0]["domain"]
+    username = f"user{int(datetime.utcnow().timestamp())}"
+    password = os.getenv("MAILTM_DEFAULT_PASS", "SuperSecure123!")
 
-# ========== BACKGROUND POLLER ==========
+    await app.state.http.post("/accounts", json={"address": f"{username}@{domain}", "password": password})
+    token = (await app.state.http.post("/token", json={"address": f"{username}@{domain}", "password": password})).json()["token"]
 
+    await email_map.insert_one({
+        "real_email": req.real_email,
+        "proxy_email": f"{username}@{domain}",
+        "proxy_id": username,
+        "token": token,
+        "expire_date": req.expire_date.isoformat()
+    })
+    logger.info("Registered %s → %s", req.real_email, f"{username}@{domain}")
+    return {"proxy_email": f"{username}@{domain}"}
+
+# ─── Link-Clicker Helper ───────────────────────────────────────────────────────
+async def click_links_in_email(detail: dict):
+    links = set()
+
+    # Extract URLs from plain text
+    text = detail.get("text", "")
+    links.update(re.findall(r'https?://\S+', text))
+
+    # Extract from HTML
+    html = detail.get("html")
+    if isinstance(html, list):
+        html = "\n".join(html)
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http"):
+                links.add(href)
+
+    logger.info("Found %d links to click", len(links))
+    for link in links:
+        if not "wait.services.ncdot.gov" in link:
+            continue
+        try:
+            logger.info("Clicking link: %s", link)
+            await app.state.http.get(link)
+        except Exception as e:
+            logger.warning("Error clicking %s: %s", link, e)
+
+# ─── Background Poller ────────────────────────────────────────────────────────
 async def poll_mailtm():
+    http = app.state.http
     while True:
         try:
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT real_email, proxy_email, proxy_id, token, expire_date FROM email_map")
-                rows = await cursor.fetchall()
+            cursor = email_map.find({})
+            async for doc in cursor:
+                # Skip expired accounts
+                expire_date = datetime.fromisoformat(doc["expire_date"])
+                if datetime.now(timezone.utc) > expire_date:
+                    continue  # Skip expired emails
 
-                for real_email, proxy_email, proxy_id, token, expire_date_str in rows:
-                    try:
-                        expire_date = datetime.fromisoformat(expire_date_str)
-                        if datetime.utcnow() > expire_date:
-                            continue  # skip expired
-                    except Exception as e:
-                        print(f"Invalid date for {real_email}: {e}")
-                        continue
-
-                    headers = {"Authorization": f"Bearer {token}"}
-                    async with httpx.AsyncClient() as client:
-                        messages = (await client.get(f"{MAILTM_API}/messages", headers=headers)).json().get("hydra:member", [])
-
-                        for msg in messages:
-                            detail = (await client.get(f"{MAILTM_API}/messages/{msg['id']}", headers=headers)).json()
-                            subject = detail.get("subject", "(no subject)")
-                            content = detail.get("text", "(empty)")
-
-                            await forward_email(real_email, subject, content)
-                            await client.delete(f"{MAILTM_API}/messages/{msg['id']}", headers=headers)
+                headers = {"Authorization": f"Bearer {doc['token']}"}
+                msgs = (await http.get("/messages", headers=headers)).json().get("hydra:member", [])
+                for m in msgs:
+                    detail = (await http.get(f"/messages/{m['id']}", headers=headers)).json()
+                    await click_links_in_email(detail)
+                    await http.delete(f"/messages/{m['id']}", headers=headers)
 
         except Exception as e:
-            print(f"Polling error: {e}")
+            logger.exception("Polling error: %s", e)
 
-        await asyncio.sleep(15)
+        await asyncio.sleep(POLL_INTERVAL)
 
-# ========== ENTRY ==========
-
+# ─── Run Server ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")

@@ -1,5 +1,7 @@
 fastapi
 uvicorn
 httpx
-aiosqlite
 email-validator
+python-dotenv
+motor
+pymongo

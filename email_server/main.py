@@ -123,7 +123,6 @@ async def poll_mailtm():
                 for m in msgs:
                     detail = (await http.get(f"/messages/{m['id']}", headers=headers)).json()
                     await click_links_in_email(detail)
-                    await http.delete(f"/messages/{m['id']}", headers=headers)
 
         except Exception as e:
             logger.exception("Polling error: %s", e)

@@ -99,8 +99,7 @@ async def click_links_in_email(detail: dict):
 
     logger.info("Found %d links to click", len(links))
     for link in links:
-        if not "wait.services.ncdot.gov" in link:
-            continue
+
         try:
             logger.info("Clicking link: %s", link)
             await app.state.http.get(link)

@@ -114,7 +114,8 @@ async def poll_mailtm():
             cursor = email_map.find({})
             async for doc in cursor:
                 # Skip expired accounts
-                expire_date = datetime.fromisoformat(doc["expire_date"])
+                expire_date = datetime.fromisoformat(doc["expire_date"]).replace(tzinfo=timezone.utc)
+
                 if datetime.now(timezone.utc) > expire_date:
                     continue  # Skip expired emails
 
